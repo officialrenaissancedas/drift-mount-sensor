@@ -65,6 +65,12 @@ const seed: Reading[] = Array.from({ length: 34 }, (_, index) => {
 });
 
 const formatTime = (date = new Date()) => date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+const normalizeStatus = (status: unknown, rms: number): Reading["status"] => {
+  const normalized = String(status ?? "").trim().toUpperCase();
+  if (normalized === "NORMAL") return "NORMAL";
+  if (normalized === "HIGH_VIBRATION") return "HIGH_VIBRATION";
+  return rms > 0.08 ? "HIGH_VIBRATION" : "NORMAL";
+};
 
 function MetricCard({ label, value, unit, hint, accent = "cyan", icon }: { label: string; value: string; unit?: string; hint: string; accent?: "cyan" | "amber" | "lime"; icon: React.ReactNode }) {
   return (
@@ -139,14 +145,13 @@ export default function Home() {
         const recent = [...data].reverse().map((row) => {
           const reading = row as Partial<Reading> & { created_at?: string; status?: string };
           const rms = Number(reading.rms ?? 0);
-          const normalizedStatus = String(reading.status ?? "").trim().toUpperCase();
           return {
             time: reading.created_at ? formatTime(new Date(reading.created_at)) : formatTime(),
             rms: Number(rms.toFixed(3)),
             vibration: Number(Number(reading.vibration ?? 0).toFixed(3)),
             ax: Number(Number(reading.ax ?? 0).toFixed(3)), ay: Number(Number(reading.ay ?? 0).toFixed(3)), az: Number(Number(reading.az ?? 0).toFixed(3)),
             gx: Number(Number(reading.gx ?? 0).toFixed(1)), gy: Number(Number(reading.gy ?? 0).toFixed(1)), gz: Number(Number(reading.gz ?? 0).toFixed(1)),
-            status: normalizedStatus === "HIGH_VIBRATION" || rms > 0.08 ? "HIGH_VIBRATION" as const : "NORMAL" as const,
+            status: normalizeStatus(reading.status, rms),
           };
         });
         setReadings(recent);
@@ -158,14 +163,13 @@ export default function Home() {
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "sensor_readings" }, ({ new: row }) => {
           const reading = row as Partial<Reading> & { created_at?: string; timestamp_ms?: number; status?: string };
           const rms = Number(reading.rms ?? 0);
-          const normalizedStatus = String(reading.status ?? "").trim().toUpperCase();
           const realtimeReading: Reading = {
             time: reading.created_at ? formatTime(new Date(reading.created_at)) : formatTime(),
             rms: Number(rms.toFixed(3)),
             vibration: Number(Number(reading.vibration ?? 0).toFixed(3)),
             ax: Number(Number(reading.ax ?? 0).toFixed(3)), ay: Number(Number(reading.ay ?? 0).toFixed(3)), az: Number(Number(reading.az ?? 0).toFixed(3)),
             gx: Number(Number(reading.gx ?? 0).toFixed(1)), gy: Number(Number(reading.gy ?? 0).toFixed(1)), gz: Number(Number(reading.gz ?? 0).toFixed(1)),
-            status: normalizedStatus === "HIGH_VIBRATION" || rms > 0.08 ? "HIGH_VIBRATION" : "NORMAL",
+            status: normalizeStatus(reading.status, rms),
           };
           setReadings((previous) => [...previous.slice(-39), realtimeReading]);
           setLastSeen(new Date());
