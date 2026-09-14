@@ -118,6 +118,7 @@ export default function Home() {
   const [range, setRange] = useState("LAST 10 MIN");
   const [isLive, setIsLive] = useState(true);
   const [lastSeen, setLastSeen] = useState(new Date());
+  const [dataWarning, setDataWarning] = useState<string | null>(null);
   const current = readings[readings.length - 1];
   const peak = Math.max(...readings.map((reading) => reading.rms));
   const chartData = useMemo(() => readings.slice(-24), [readings]);
@@ -141,7 +142,15 @@ export default function Home() {
       let cancelled = false;
       const loadRecentReadings = async () => {
         const { data, error } = await supabase.from("sensor_readings").select("*").order("created_at", { ascending: false }).limit(40);
-        if (cancelled || error || !data?.length) return;
+        if (cancelled) return;
+        if (error) {
+          setDataWarning(`Supabase read failed: ${error.message}`);
+          return;
+        }
+        if (!data?.length) {
+          setDataWarning("Supabase connected, but sensor_readings returned no rows.");
+          return;
+        }
         const recent = [...data].reverse().map((row) => {
           const reading = row as Partial<Reading> & { created_at?: string; status?: string };
           const rms = Number(reading.rms ?? 0);
@@ -156,6 +165,7 @@ export default function Home() {
         });
         setReadings(recent);
         setLastSeen(new Date());
+        setDataWarning(null);
       };
       void loadRecentReadings();
       const channel = supabase
@@ -173,8 +183,11 @@ export default function Home() {
           };
           setReadings((previous) => [...previous.slice(-39), realtimeReading]);
           setLastSeen(new Date());
+          setDataWarning(null);
         })
-        .subscribe();
+        .subscribe((status) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setDataWarning(`Supabase Realtime status: ${status}`);
+        });
       return () => { cancelled = true; void supabase.removeChannel(channel); };
     }
     const timer = window.setInterval(() => {
@@ -239,6 +252,7 @@ export default function Home() {
         {activeView !== "overview" && <FeatureView view={activeView} readings={readings} current={current} isLive={isLive} setIsLive={setIsLive} selectedDevice={selectedDevice} setSelectedDevice={setSelectedDevice} onExport={exportCsv} />}
         <div className={activeView === "overview" ? "" : "overview-hidden"}>
         <div className="hero-row"><div><div className="section-kicker"><span className="live-line" /> LIVE FLIGHT QUALITY</div><p className="hero-copy">Real-time vibration intelligence for <strong>DRIFT</strong> aerial capture systems.</p></div><div className="range-control"><button className="range-button" onClick={() => setRange(ranges[(ranges.indexOf(range) + 1) % ranges.length])}>{range} <ChevronDown size={14} /></button><button className="export-button" onClick={exportCsv}><Download size={15} /> EXPORT CSV</button></div></div>
+        {dataWarning && <div className="data-warning"><WifiOff size={14} /><span><strong>DATA FEED WARNING</strong> {dataWarning}</span></div>}
         <section className="overview-grid">
           <MetricCard label="CURRENT RMS" value={current.rms.toFixed(3)} unit="g" hint="1 sec rolling window" accent="cyan" icon={<Gauge size={17} />} />
           <MetricCard label="VIBRATION" value={current.vibration.toFixed(3)} unit="g" hint="Live acceleration variance" accent="amber" icon={<Activity size={17} />} />
