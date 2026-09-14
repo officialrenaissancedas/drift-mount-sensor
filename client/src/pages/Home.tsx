@@ -164,7 +164,8 @@ export default function Home() {
           };
         });
         setReadings(recent);
-        setLastSeen(new Date());
+        const latestCreatedAt = (data[0] as { created_at?: string }).created_at;
+        setLastSeen(latestCreatedAt ? new Date(latestCreatedAt) : new Date());
         setDataWarning(null);
       };
       void loadRecentReadings();
@@ -182,7 +183,7 @@ export default function Home() {
             status: normalizeStatus(reading.status, rms),
           };
           setReadings((previous) => [...previous.slice(-39), realtimeReading]);
-          setLastSeen(new Date());
+          setLastSeen(reading.created_at ? new Date(reading.created_at) : new Date());
           setDataWarning(null);
         })
         .subscribe((status) => {
