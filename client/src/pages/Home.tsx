@@ -132,24 +132,46 @@ export default function Home() {
     const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
     if (supabase) {
+      let cancelled = false;
+      const loadRecentReadings = async () => {
+        const { data, error } = await supabase.from("sensor_readings").select("*").order("created_at", { ascending: false }).limit(40);
+        if (cancelled || error || !data?.length) return;
+        const recent = [...data].reverse().map((row) => {
+          const reading = row as Partial<Reading> & { created_at?: string; status?: string };
+          const rms = Number(reading.rms ?? 0);
+          const normalizedStatus = String(reading.status ?? "").trim().toUpperCase();
+          return {
+            time: reading.created_at ? formatTime(new Date(reading.created_at)) : formatTime(),
+            rms: Number(rms.toFixed(3)),
+            vibration: Number(Number(reading.vibration ?? 0).toFixed(3)),
+            ax: Number(Number(reading.ax ?? 0).toFixed(3)), ay: Number(Number(reading.ay ?? 0).toFixed(3)), az: Number(Number(reading.az ?? 0).toFixed(3)),
+            gx: Number(Number(reading.gx ?? 0).toFixed(1)), gy: Number(Number(reading.gy ?? 0).toFixed(1)), gz: Number(Number(reading.gz ?? 0).toFixed(1)),
+            status: normalizedStatus === "HIGH_VIBRATION" || rms > 0.08 ? "HIGH_VIBRATION" as const : "NORMAL" as const,
+          };
+        });
+        setReadings(recent);
+        setLastSeen(new Date());
+      };
+      void loadRecentReadings();
       const channel = supabase
         .channel("sensor-readings-live")
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "sensor_readings" }, ({ new: row }) => {
           const reading = row as Partial<Reading> & { created_at?: string; timestamp_ms?: number; status?: string };
           const rms = Number(reading.rms ?? 0);
+          const normalizedStatus = String(reading.status ?? "").trim().toUpperCase();
           const realtimeReading: Reading = {
             time: reading.created_at ? formatTime(new Date(reading.created_at)) : formatTime(),
             rms: Number(rms.toFixed(3)),
             vibration: Number(Number(reading.vibration ?? 0).toFixed(3)),
             ax: Number(Number(reading.ax ?? 0).toFixed(3)), ay: Number(Number(reading.ay ?? 0).toFixed(3)), az: Number(Number(reading.az ?? 0).toFixed(3)),
             gx: Number(Number(reading.gx ?? 0).toFixed(1)), gy: Number(Number(reading.gy ?? 0).toFixed(1)), gz: Number(Number(reading.gz ?? 0).toFixed(1)),
-            status: reading.status === "HIGH_VIBRATION" || rms > 0.08 ? "HIGH_VIBRATION" : "NORMAL",
+            status: normalizedStatus === "HIGH_VIBRATION" || rms > 0.08 ? "HIGH_VIBRATION" : "NORMAL",
           };
           setReadings((previous) => [...previous.slice(-39), realtimeReading]);
           setLastSeen(new Date());
         })
         .subscribe();
-      return () => { void supabase.removeChannel(channel); };
+      return () => { cancelled = true; void supabase.removeChannel(channel); };
     }
     const timer = window.setInterval(() => {
       setReadings((previous) => {
