@@ -114,6 +114,16 @@ export default function Home() {
   const current = readings[readings.length - 1];
   const peak = Math.max(...readings.map((reading) => reading.rms));
   const chartData = useMemo(() => readings.slice(-24), [readings]);
+  const viewLabels: Record<string, [string, string]> = {
+    overview: ["Mount Sensor", "Telemetry"],
+    history: ["Flight history", "Sessions"],
+    health: ["Device health", "Diagnostics"],
+    calibration: ["Calibration", "Signal model"],
+    settings: ["System settings", "Preferences"],
+  };
+  const [pageTitle, pageAccent] = viewLabels[activeView];
+  const ranges = ["LAST 10 MIN", "LAST 30 MIN", "LAST 1 HOUR"];
+  const supabaseReady = Boolean(import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
   useEffect(() => {
     if (!isLive) return;
@@ -191,11 +201,11 @@ export default function Home() {
     </aside>
 
     <main className="main-content">
-      <header className="topbar"><div><div className="crumb">DRIFT / SENSOR NETWORK / <strong>OVERVIEW</strong></div><h1>Mount Sensor <span>Telemetry</span></h1></div><div className="top-actions"><div className="refresh-readout"><span className="pulse-dot" /> LAST SYNC <strong>{formatTime(lastSeen)}</strong></div><button className="icon-button"><CircleHelp size={17} /></button><div className="avatar">DS</div></div></header>
+      <header className="topbar"><div><div className="crumb">DRIFT / SENSOR NETWORK / <strong>{activeView.toUpperCase()}</strong></div><h1>{pageTitle} <span>{pageAccent}</span></h1></div><div className="top-actions"><div className="refresh-readout"><span className="pulse-dot" /> {supabaseReady ? "SUPABASE LINK" : "DEMO STREAM"} <strong>{formatTime(lastSeen)}</strong></div><button className="icon-button" title="Telemetry help"><CircleHelp size={17} /></button><div className="avatar">DS</div></div></header>
       <div className="content-inner">
         {activeView !== "overview" && <FeatureView view={activeView} readings={readings} current={current} isLive={isLive} setIsLive={setIsLive} />}
         <div className={activeView === "overview" ? "" : "overview-hidden"}>
-        <div className="hero-row"><div><div className="section-kicker"><span className="live-line" /> LIVE FLIGHT QUALITY</div><p className="hero-copy">Real-time vibration intelligence for <strong>DRIFT</strong> aerial capture systems.</p></div><div className="range-control"><button className="range-button">{range} <ChevronDown size={14} /></button><button className="export-button" onClick={exportCsv}><Download size={15} /> EXPORT CSV</button></div></div>
+        <div className="hero-row"><div><div className="section-kicker"><span className="live-line" /> LIVE FLIGHT QUALITY</div><p className="hero-copy">Real-time vibration intelligence for <strong>DRIFT</strong> aerial capture systems.</p></div><div className="range-control"><button className="range-button" onClick={() => setRange(ranges[(ranges.indexOf(range) + 1) % ranges.length])}>{range} <ChevronDown size={14} /></button><button className="export-button" onClick={exportCsv}><Download size={15} /> EXPORT CSV</button></div></div>
         <section className="overview-grid">
           <MetricCard label="CURRENT RMS" value={current.rms.toFixed(3)} unit="g" hint="1 sec rolling window" accent="cyan" icon={<Gauge size={17} />} />
           <MetricCard label="VIBRATION" value={current.vibration.toFixed(3)} unit="g" hint="Live acceleration variance" accent="amber" icon={<Activity size={17} />} />
