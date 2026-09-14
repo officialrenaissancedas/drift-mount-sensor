@@ -36,6 +36,7 @@ import {
 type Reading = {
   time: string;
   rms: number;
+  peakRms?: number;
   vibration: number;
   ax: number;
   ay: number;
@@ -43,7 +44,10 @@ type Reading = {
   gx: number;
   gy: number;
   gz: number;
-  status: "NORMAL" | "HIGH_VIBRATION";
+  status: "NORMAL" | "HIGH_VIBRATION" | "IMPACT" | "WARMING_UP";
+  deviceId?: string;
+  flightId?: string;
+  createdAt?: string;
 };
 
 const seed: Reading[] = Array.from({ length: 34 }, (_, index) => {
@@ -69,8 +73,14 @@ const normalizeStatus = (status: unknown, rms: number): Reading["status"] => {
   const normalized = String(status ?? "").trim().toUpperCase();
   if (normalized === "NORMAL") return "NORMAL";
   if (normalized === "HIGH_VIBRATION") return "HIGH_VIBRATION";
+  if (normalized === "IMPACT") return "IMPACT";
+  if (normalized === "WARMING_UP") return "WARMING_UP";
   return rms > 0.08 ? "HIGH_VIBRATION" : "NORMAL";
 };
+
+const DEVICE_ID = "DRIFT-IMU-01";
+const FLIGHT_ID = "DRIFT-FLIGHT-01";
+const rangeMinutes = (range: string) => range === "LAST 30 MIN" ? 30 : range === "LAST 1 HOUR" ? 60 : 10;
 
 function MetricCard({ label, value, unit, hint, accent = "cyan", icon }: { label: string; value: string; unit?: string; hint: string; accent?: "cyan" | "amber" | "lime"; icon: React.ReactNode }) {
   return (
@@ -119,8 +129,9 @@ export default function Home() {
   const [isLive, setIsLive] = useState(true);
   const [lastSeen, setLastSeen] = useState(new Date());
   const [dataWarning, setDataWarning] = useState<string | null>(null);
+  const [readingCount, setReadingCount] = useState(0);
   const current = readings[readings.length - 1];
-  const peak = Math.max(...readings.map((reading) => reading.rms));
+  const peak = Math.max(...readings.map((reading) => reading.peakRms ?? reading.rms));
   const chartData = useMemo(() => readings.slice(-24), [readings]);
   const viewLabels: Record<string, [string, string]> = {
     overview: ["Mount Sensor", "Telemetry"],
@@ -141,7 +152,10 @@ export default function Home() {
     if (supabase) {
       let cancelled = false;
       const loadRecentReadings = async () => {
-        const { data, error } = await supabase.from("sensor_readings").select("*").order("created_at", { ascending: false }).limit(40);
+        const since = new Date(Date.now() - rangeMinutes(range) * 60_000).toISOString();
+        let query = supabase.from("sensor_readings").select("*", { count: "exact" }).eq("flight_id", FLIGHT_ID).gte("created_at", since).order("created_at", { ascending: false }).limit(40);
+        if (selectedDevice !== "ALL") query = query.eq("device_id", selectedDevice);
+        const { data, error } = await query;
         if (cancelled) return;
         if (error) {
           setDataWarning(`Supabase read failed: ${error.message}`);
@@ -152,11 +166,12 @@ export default function Home() {
           return;
         }
         const recent = [...data].reverse().map((row) => {
-          const reading = row as Partial<Reading> & { created_at?: string; status?: string };
+          const reading = row as Partial<Reading> & { created_at?: string; status?: string; device_id?: string; flight_id?: string; peak_rms?: number };
           const rms = Number(reading.rms ?? 0);
           return {
             time: reading.created_at ? formatTime(new Date(reading.created_at)) : formatTime(),
             rms: Number(rms.toFixed(3)),
+            peakRms: Number(Number(reading.peak_rms ?? rms).toFixed(3)),
             vibration: Number(Number(reading.vibration ?? 0).toFixed(3)),
             ax: Number(Number(reading.ax ?? 0).toFixed(3)), ay: Number(Number(reading.ay ?? 0).toFixed(3)), az: Number(Number(reading.az ?? 0).toFixed(3)),
             gx: Number(Number(reading.gx ?? 0).toFixed(1)), gy: Number(Number(reading.gy ?? 0).toFixed(1)), gz: Number(Number(reading.gz ?? 0).toFixed(1)),
@@ -164,6 +179,7 @@ export default function Home() {
           };
         });
         setReadings(recent);
+        setReadingCount(data.length);
         const latestCreatedAt = (data[0] as { created_at?: string }).created_at;
         setLastSeen(latestCreatedAt ? new Date(latestCreatedAt) : new Date());
         setDataWarning(null);
@@ -171,18 +187,21 @@ export default function Home() {
       void loadRecentReadings();
       const channel = supabase
         .channel("sensor-readings-live")
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "sensor_readings" }, ({ new: row }) => {
-          const reading = row as Partial<Reading> & { created_at?: string; timestamp_ms?: number; status?: string };
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "sensor_readings", filter: `flight_id=eq.${FLIGHT_ID}` }, ({ new: row }) => {
+          const reading = row as Partial<Reading> & { created_at?: string; timestamp_ms?: number; status?: string; device_id?: string; flight_id?: string; peak_rms?: number };
+          if (selectedDevice !== "ALL" && reading.device_id !== selectedDevice) return;
           const rms = Number(reading.rms ?? 0);
           const realtimeReading: Reading = {
             time: reading.created_at ? formatTime(new Date(reading.created_at)) : formatTime(),
             rms: Number(rms.toFixed(3)),
+            peakRms: Number(Number(reading.peak_rms ?? rms).toFixed(3)),
             vibration: Number(Number(reading.vibration ?? 0).toFixed(3)),
             ax: Number(Number(reading.ax ?? 0).toFixed(3)), ay: Number(Number(reading.ay ?? 0).toFixed(3)), az: Number(Number(reading.az ?? 0).toFixed(3)),
             gx: Number(Number(reading.gx ?? 0).toFixed(1)), gy: Number(Number(reading.gy ?? 0).toFixed(1)), gz: Number(Number(reading.gz ?? 0).toFixed(1)),
             status: normalizeStatus(reading.status, rms),
           };
           setReadings((previous) => [...previous.slice(-39), realtimeReading]);
+          setReadingCount((count) => count + 1);
           setLastSeen(reading.created_at ? new Date(reading.created_at) : new Date());
           setDataWarning(null);
         })
@@ -213,7 +232,7 @@ export default function Home() {
       setLastSeen(new Date());
     }, 2600);
     return () => window.clearInterval(timer);
-  }, [isLive]);
+  }, [isLive, range, selectedDevice]);
 
   const exportCsv = () => {
     const header = "timestamp,device_id,rms_g,vibration_g,status\n";
@@ -258,7 +277,7 @@ export default function Home() {
           <MetricCard label="CURRENT RMS" value={current.rms.toFixed(3)} unit="g" hint="1 sec rolling window" accent="cyan" icon={<Gauge size={17} />} />
           <MetricCard label="VIBRATION" value={current.vibration.toFixed(3)} unit="g" hint="Live acceleration variance" accent="amber" icon={<Activity size={17} />} />
           <MetricCard label="PEAK RMS" value={peak.toFixed(3)} unit="g" hint={`Highest · ${range.toLowerCase()}`} accent="lime" icon={<Zap size={17} />} />
-          <div className={`quality-card ${current.status === "HIGH_VIBRATION" ? "high" : "normal"}`}><div className="quality-head"><span className="metric-label">FLIGHT QUALITY</span><ShieldCheck size={18} /></div><div className="quality-status">{current.status === "HIGH_VIBRATION" ? "HIGH VIBRATION" : "NORMAL"}</div><div className="quality-foot"><span className="quality-bar"><i style={{ width: `${Math.min(100, (current.rms / 0.08) * 100)}%` }} /></span><span>THRESHOLD {current.rms > 0.08 ? "EXCEEDED" : "NOMINAL"}</span></div></div>
+          <div className={`quality-card ${current.status === "NORMAL" || current.status === "WARMING_UP" ? "normal" : "high"}`}><div className="quality-head"><span className="metric-label">FLIGHT QUALITY</span><ShieldCheck size={18} /></div><div className="quality-status">{current.status.replace("_", " ")}</div><div className="quality-foot"><span className="quality-bar"><i style={{ width: `${Math.min(100, (current.rms / 0.08) * 100)}%` }} /></span><span>STATUS FROM SUPABASE</span></div></div>
         </section>
 
         <div className="section-title-row"><div><div className="eyebrow">SIGNAL MONITORING</div><div className="panel-subtitle">High-frequency telemetry from the MPU6050 sensor</div></div><div className="live-toggle" onClick={() => setIsLive(!isLive)}><span className={isLive ? "toggle active" : "toggle"}><i /></span>{isLive ? "REALTIME ON" : "PAUSED"}</div></div>
@@ -271,9 +290,9 @@ export default function Home() {
         </div>
 
         <div className="lower-grid"><ChartCard title="GYROSCOPE" subtitle="3-axis angular velocity / °/s" legend={<div className="legend"><span><i className="legend-red" /> X</span><span><i className="legend-blue" /> Y</span><span><i className="legend-lime" /> Z</span></div>}><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData} margin={{ top: 14, right: 12, left: -24, bottom: 0 }}><CartesianGrid stroke="#1c2a35" strokeDasharray="2 4" vertical={false} /><XAxis dataKey="time" tick={{ fill: "#627887", fontSize: 10 }} axisLine={false} tickLine={false} interval={5} /><YAxis domain={[-16, 16]} tick={{ fill: "#627887", fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip contentStyle={tooltipStyle} /><Line type="monotone" dataKey="gx" stroke="#ff7d75" strokeWidth={1.5} dot={false} /><Line type="monotone" dataKey="gy" stroke="#6fa8ff" strokeWidth={1.5} dot={false} /><Line type="monotone" dataKey="gz" stroke="#b6e36a" strokeWidth={1.5} dot={false} /></LineChart></ResponsiveContainer></ChartCard>
-          <section className="panel session-card"><div className="panel-heading"><div><div className="eyebrow">FLIGHT SESSION</div><div className="panel-subtitle">Current capture context</div></div><Radio size={17} color="#60e5df" /></div><div className="session-list"><div><span>DEVICE ID</span><strong>DRIFT-IMU-01</strong></div><div><span>SESSION START</span><strong>14:06:12 <em>UTC</em></strong></div><div><span>LATEST READING</span><strong>{formatTime(lastSeen)} <em>LOCAL</em></strong></div><div><span>READINGS RECEIVED</span><strong>{(readings.length * 31).toLocaleString()}</strong></div></div><div className="threshold"><div className="threshold-head"><span><SlidersHorizontal size={13} /> PROTOTYPE THRESHOLD</span><strong>0.08 g RMS</strong></div><p>Calibration value for flight testing. Not a scientifically validated drone safety threshold.</p></div></section></div>
+          <section className="panel session-card"><div className="panel-heading"><div><div className="eyebrow">FLIGHT SESSION</div><div className="panel-subtitle">{FLIGHT_ID}</div></div><Radio size={17} color="#60e5df" /></div><div className="session-list"><div><span>DEVICE ID</span><strong>{current.deviceId ?? DEVICE_ID}</strong></div><div><span>SESSION START</span><strong>SUPABASE <em>UTC</em></strong></div><div><span>LATEST READING</span><strong>{formatTime(lastSeen)} <em>LOCAL</em></strong></div><div><span>READINGS RECEIVED</span><strong>{(readingCount || readings.length).toLocaleString()}</strong></div></div><div className="threshold"><div className="threshold-head"><span><SlidersHorizontal size={13} /> PROTOTYPE THRESHOLD</span><strong>0.08 g RMS</strong></div><p>Calibration value for flight testing. Not a scientifically validated drone safety threshold.</p></div></section></div>
 
-        <section className="panel events-panel"><div className="panel-heading"><div><div className="eyebrow">SENSOR EVENT HISTORY</div><div className="panel-subtitle">Latest readings from the selected time range</div></div><label className="table-filter"><Signal size={13} /><select value={selectedDevice} onChange={(event) => setSelectedDevice(event.target.value)}><option value="ALL">ALL DEVICES</option><option value="DRIFT-IMU-01">DRIFT-IMU-01</option><option value="DRIFT-IMU-02">DRIFT-IMU-02 · STANDBY</option></select></label></div><div className="table-scroll"><table><thead><tr><th>TIMESTAMP</th><th>DEVICE</th><th>RMS</th><th>VIBRATION</th><th>STATUS</th></tr></thead><tbody>{readings.slice(-6).reverse().map((reading, index) => <tr key={`${reading.time}-${index}`}><td>{reading.time}</td><td><span className="device-cell"><span className="tiny-dot" /> DRIFT-IMU-01</span></td><td className="mono">{reading.rms.toFixed(3)} g</td><td className="mono">{reading.vibration.toFixed(3)} g</td><td><span className={`status-pill ${reading.status === "HIGH_VIBRATION" ? "warning" : "good"}`}>{reading.status === "HIGH_VIBRATION" ? "HIGH VIBRATION" : "NORMAL"}</span></td></tr>)}</tbody></table></div></section>
+        <section className="panel events-panel"><div className="panel-heading"><div><div className="eyebrow">SENSOR EVENT HISTORY</div><div className="panel-subtitle">Latest readings from the selected time range</div></div><label className="table-filter"><Signal size={13} /><select value={selectedDevice} onChange={(event) => setSelectedDevice(event.target.value)}><option value="ALL">ALL DEVICES</option><option value="DRIFT-IMU-01">DRIFT-IMU-01</option><option value="DRIFT-IMU-02">DRIFT-IMU-02 · STANDBY</option></select></label></div><div className="table-scroll"><table><thead><tr><th>TIMESTAMP</th><th>DEVICE</th><th>RMS</th><th>VIBRATION</th><th>STATUS</th></tr></thead><tbody>{readings.slice(-6).reverse().map((reading, index) => <tr key={`${reading.time}-${index}`}><td>{reading.time}</td><td><span className="device-cell"><span className="tiny-dot" /> {reading.deviceId ?? DEVICE_ID}</span></td><td className="mono">{reading.rms.toFixed(3)} g</td><td className="mono">{reading.vibration.toFixed(3)} g</td><td><span className={`status-pill ${reading.status === "NORMAL" ? "good" : "warning"}`}>{reading.status.replace("_", " ")}</span></td></tr>)}</tbody></table></div></section>
         <footer className="footer"><span><BatteryCharging size={14} /> ESP32 DEV MODULE · MPU6050 · 200 Hz SAMPLING</span><span>SUPABASE REALTIME <i className="footer-dot" /> ENVIRONMENT READY</span></footer>
         </div>
       </div>
