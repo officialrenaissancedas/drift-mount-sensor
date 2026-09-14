@@ -83,8 +83,31 @@ function ChartCard({ title, subtitle, children, legend }: { title: string; subti
   </section>;
 }
 
+function FeatureView({ view, readings, current, isLive, setIsLive }: { view: string; readings: Reading[]; current: Reading; isLive: boolean; setIsLive: (value: boolean) => void }) {
+  const titles: Record<string, [string, string]> = {
+    history: ["Flight history", "Review completed capture sessions and vibration events."],
+    health: ["Device health", "Connection and sensor acquisition diagnostics for DRIFT-IMU-01."],
+    calibration: ["Calibration", "Tune the prototype signal model before real flight testing."],
+    settings: ["System settings", "Manage dashboard connectivity and telemetry preferences."],
+  };
+  const [title, subtitle] = titles[view] ?? titles.history;
+  const sessions = [
+    ["SESSION-024", "14 Sep 2026 · 14:06", "NORMAL", "0.054 g", "1,054"],
+    ["SESSION-023", "13 Sep 2026 · 18:42", "NORMAL", "0.061 g", "8,421"],
+    ["SESSION-022", "12 Sep 2026 · 10:15", "REVIEW", "0.092 g", "6,208"],
+  ];
+  return <div className="feature-view"><div className="feature-heading"><div><div className="section-kicker"><span className="live-line" /> SYSTEM MODULE</div><h2>{title}</h2><p>{subtitle}</p></div><div className="feature-chip"><span className="pulse-dot" /> DRIFT-IMU-01</div></div>
+    {view === "history" && <section className="panel feature-panel"><div className="panel-heading"><div><div className="eyebrow">CAPTURE SESSIONS</div><div className="panel-subtitle">Archived flight-quality summaries</div></div><button className="export-button">EXPORT ALL CSV</button></div><div className="session-table">{sessions.map((session) => <div className="session-row" key={session[0]}><div><strong>{session[0]}</strong><span>{session[1]}</span></div><span className={`status-pill ${session[2] === "REVIEW" ? "warning" : "good"}`}>{session[2]}</span><div><span className="row-label">PEAK RMS</span><strong>{session[3]}</strong></div><div><span className="row-label">READINGS</span><strong>{session[4]}</strong></div><ArrowUpRight size={15} /></div>)}</div></section>}
+    {view === "health" && <><div className="health-grid"><div className="panel health-card"><div className="eyebrow">CONNECTION</div><div className="health-value good-text"><span className="pulse-dot" /> ONLINE</div><p>Last reading {formatTime()} · Supabase Realtime channel ready</p></div><div className="panel health-card"><div className="eyebrow">ACQUISITION RATE</div><div className="health-value">200 <small>Hz</small></div><p>Configured sensor sampling frequency</p></div><div className="panel health-card"><div className="eyebrow">SENSOR ADDRESS</div><div className="health-value mono-text">0x68</div><p>WHO_AM_I response: 0x70</p></div><div className="panel health-card"><div className="eyebrow">UPLOAD ARCHITECTURE</div><div className="health-value good-text">READY</div><p>Non-blocking upload recommended for production firmware</p></div></div><section className="panel feature-panel health-log"><div className="eyebrow">DIAGNOSTIC CHECKS</div>{["MPU6050 I2C bus", "Accelerometer ±2g range", "Gyroscope ±250 deg/s range", "Realtime publication", "Row-level security"].map((label) => <div className="diagnostic-row" key={label}><span><CheckCircle2 size={15} /> {label}</span><strong>PASS</strong></div>)}</section></>}
+    {view === "calibration" && <section className="panel feature-panel form-panel"><div className="eyebrow">PROTOTYPE SIGNAL MODEL</div><h3>Threshold calibration</h3><p className="form-copy">The current threshold is a prototype value. Use real drone-flight data to calibrate it before presenting a safety interpretation.</p><div className="calibration-control"><div><span className="row-label">RMS HIGH VIBRATION THRESHOLD</span><strong>0.08 g</strong></div><input type="range" min="0.02" max="0.2" step="0.01" defaultValue="0.08" /></div><div className="calibration-control"><div><span className="row-label">RMS WINDOW</span><strong>200 samples / 1 sec</strong></div><div className="static-select">1 second rolling window <ChevronDown size={14} /></div></div><button className="export-button calibration-button">SAVE CALIBRATION PROFILE</button></section>}
+    {view === "settings" && <section className="panel feature-panel settings-panel"><div className="eyebrow">TELEMETRY PREFERENCES</div><div className="setting-row"><div><strong>Realtime updates</strong><span>Subscribe to new sensor_readings INSERT events</span></div><div className={isLive ? "toggle active" : "toggle"} onClick={() => setIsLive(!isLive)}><i /></div></div><div className="setting-row"><div><strong>Device filter</strong><span>Show readings from the selected device</span></div><div className="static-select">DRIFT-IMU-01 <ChevronDown size={14} /></div></div><div className="setting-row"><div><strong>Prototype threshold label</strong><span>Keep calibration disclaimers visible in the interface</span></div><span className="status-pill good">VISIBLE</span></div><div className="setting-row"><div><strong>Data source</strong><span>Supabase table / public sensor_readings</span></div><span className="feature-chip">CONNECTED</span></div></section>}
+    <div className="feature-footnote"><Wifi size={14} /> {isLive ? "Realtime monitoring active" : "Realtime monitoring paused"} · Latest RMS {current.rms.toFixed(3)} g · {readings.length} buffered points</div>
+  </div>;
+}
+
 export default function Home() {
   const [readings, setReadings] = useState(seed);
+  const [activeView, setActiveView] = useState("overview");
   const [range, setRange] = useState("LAST 10 MIN");
   const [isLive, setIsLive] = useState(true);
   const [lastSeen, setLastSeen] = useState(new Date());
@@ -157,12 +180,12 @@ export default function Home() {
       <div className="side-status"><span className="pulse-dot" /> SYSTEM OPERATIONAL</div>
       <nav className="nav-list">
         <div className="nav-section">WORKSPACE</div>
-        <a className="nav-item active"><LayoutDashboard size={16} /> Overview <span className="nav-kbd">01</span></a>
-        <a className="nav-item"><History size={16} /> Flight history</a>
-        <a className="nav-item"><Satellite size={16} /> Device health</a>
+        <button className={`nav-item ${activeView === "overview" ? "active" : ""}`} onClick={() => setActiveView("overview")}><LayoutDashboard size={16} /> Overview <span className="nav-kbd">01</span></button>
+        <button className={`nav-item ${activeView === "history" ? "active" : ""}`} onClick={() => setActiveView("history")}><History size={16} /> Flight history</button>
+        <button className={`nav-item ${activeView === "health" ? "active" : ""}`} onClick={() => setActiveView("health")}><Satellite size={16} /> Device health</button>
         <div className="nav-section second">CONFIGURATION</div>
-        <a className="nav-item"><SlidersHorizontal size={16} /> Calibration</a>
-        <a className="nav-item"><Settings2 size={16} /> System settings</a>
+        <button className={`nav-item ${activeView === "calibration" ? "active" : ""}`} onClick={() => setActiveView("calibration")}><SlidersHorizontal size={16} /> Calibration</button>
+        <button className={`nav-item ${activeView === "settings" ? "active" : ""}`} onClick={() => setActiveView("settings")}><Settings2 size={16} /> System settings</button>
       </nav>
       <div className="sidebar-bottom"><div className="connection-card"><div className="connection-label"><Wifi size={14} /> SUPABASE LINK</div><div className="connection-state"><span className="tiny-dot" /> READY FOR REALTIME</div><div className="connection-meta">RLS protected · anon key only</div></div><a className="back-link" href="#drift"><ArrowUpRight size={15} /> Back to DRIFT</a></div>
     </aside>
@@ -170,6 +193,8 @@ export default function Home() {
     <main className="main-content">
       <header className="topbar"><div><div className="crumb">DRIFT / SENSOR NETWORK / <strong>OVERVIEW</strong></div><h1>Mount Sensor <span>Telemetry</span></h1></div><div className="top-actions"><div className="refresh-readout"><span className="pulse-dot" /> LAST SYNC <strong>{formatTime(lastSeen)}</strong></div><button className="icon-button"><CircleHelp size={17} /></button><div className="avatar">DS</div></div></header>
       <div className="content-inner">
+        {activeView !== "overview" && <FeatureView view={activeView} readings={readings} current={current} isLive={isLive} setIsLive={setIsLive} />}
+        <div className={activeView === "overview" ? "" : "overview-hidden"}>
         <div className="hero-row"><div><div className="section-kicker"><span className="live-line" /> LIVE FLIGHT QUALITY</div><p className="hero-copy">Real-time vibration intelligence for <strong>DRIFT</strong> aerial capture systems.</p></div><div className="range-control"><button className="range-button">{range} <ChevronDown size={14} /></button><button className="export-button" onClick={exportCsv}><Download size={15} /> EXPORT CSV</button></div></div>
         <section className="overview-grid">
           <MetricCard label="CURRENT RMS" value={current.rms.toFixed(3)} unit="g" hint="1 sec rolling window" accent="cyan" icon={<Gauge size={17} />} />
@@ -192,6 +217,7 @@ export default function Home() {
 
         <section className="panel events-panel"><div className="panel-heading"><div><div className="eyebrow">SENSOR EVENT HISTORY</div><div className="panel-subtitle">Latest readings from the selected time range</div></div><div className="table-filter"><Signal size={13} /> ALL DEVICES <ChevronDown size={13} /></div></div><div className="table-scroll"><table><thead><tr><th>TIMESTAMP</th><th>DEVICE</th><th>RMS</th><th>VIBRATION</th><th>STATUS</th></tr></thead><tbody>{readings.slice(-6).reverse().map((reading, index) => <tr key={`${reading.time}-${index}`}><td>{reading.time}</td><td><span className="device-cell"><span className="tiny-dot" /> DRIFT-IMU-01</span></td><td className="mono">{reading.rms.toFixed(3)} g</td><td className="mono">{reading.vibration.toFixed(3)} g</td><td><span className={`status-pill ${reading.status === "HIGH_VIBRATION" ? "warning" : "good"}`}>{reading.status === "HIGH_VIBRATION" ? "HIGH VIBRATION" : "NORMAL"}</span></td></tr>)}</tbody></table></div></section>
         <footer className="footer"><span><BatteryCharging size={14} /> ESP32 DEV MODULE · MPU6050 · 200 Hz SAMPLING</span><span>SUPABASE REALTIME <i className="footer-dot" /> ENVIRONMENT READY</span></footer>
+        </div>
       </div>
     </main>
   </div>;
