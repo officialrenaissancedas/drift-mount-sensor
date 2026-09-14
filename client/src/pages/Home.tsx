@@ -81,6 +81,27 @@ const normalizeStatus = (status: unknown, rms: number): Reading["status"] => {
 const DEVICE_ID = "DRIFT-IMU-01";
 const FLIGHT_ID = "DRIFT-FLIGHT-01";
 const rangeMinutes = (range: string) => range === "LAST 30 MIN" ? 30 : range === "LAST 1 HOUR" ? 60 : 10;
+const mockVideoEvents = [
+  { id: "EVENT 1", start: 8.2, end: 9.1, type: "IMPACT", severity: "HIGH", action: "EXCLUDE", quality: "BAD" },
+  { id: "EVENT 2", start: 17.4, end: 18.0, type: "HIGH_VIBRATION", severity: "MEDIUM", action: "DOWN-WEIGHT", quality: "DEGRADED" },
+  { id: "EVENT 3", start: 23.1, end: 23.8, type: "IMPACT", severity: "HIGH", action: "EXCLUDE", quality: "BAD" },
+];
+
+function DemoVideoSync() {
+  const [selectedEvent, setSelectedEvent] = useState(mockVideoEvents[0]);
+  const totalFrames = 825;
+  const frameRange = (event: typeof mockVideoEvents[number]) => `${Math.round(event.start * 30)}–${Math.round(event.end * 30)}`;
+  const excludedFrames = mockVideoEvents.filter((event) => event.action === "EXCLUDE").reduce((total, event) => total + (Math.round(event.end * 30) - Math.round(event.start * 30) + 1), 0);
+  const degradedFrames = mockVideoEvents.filter((event) => event.action === "DOWN-WEIGHT").reduce((total, event) => total + (Math.round(event.end * 30) - Math.round(event.start * 30) + 1), 0);
+  const formatSeconds = (value: number) => `${value.toFixed(1)}s`;
+  return <section className="demo-sync-panel">
+    <div className="demo-sync-header"><div><div className="eyebrow">DEMO / MOCK VIDEO SYNCHRONIZATION</div><h2>Vibration-aware frame filtering</h2><p>Concept demo only. ESP32 telemetry is real; video timing and frame decisions below are simulated.</p></div><span className="demo-badge">MOCK DATA · 27.5 SEC · 30 FPS</span></div>
+    <div className="demo-flow"><span>DRONE VIDEO</span><b>→</b><span>VIBRATION DETECTION</span><b>→</b><span>AFFECTED FRAMES</span><b>→</b><strong>3D RECONSTRUCTION</strong></div>
+    <div className="demo-timeline-wrap"><div className="demo-time-axis"><span>0.0s</span><span>8.2s</span><span>17.4s</span><span>23.1s</span><span>27.5s</span></div><div className="demo-timeline">{mockVideoEvents.map((event) => <button key={event.id} className={`demo-event ${event.quality.toLowerCase()}`} style={{ left: `${(event.start / 27.5) * 100}%`, width: `${((event.end - event.start) / 27.5) * 100}%` }} onClick={() => setSelectedEvent(event)} aria-label={`Select ${event.type} event`}><span>{event.type}</span></button>)}</div><div className="demo-timeline-label"><span>VIDEO TIMELINE</span><span>27.5 SEC MOCK CLIP</span></div></div>
+    <div className="demo-detail-grid"><div className="demo-event-detail"><div className="eyebrow">SELECTED MOCK EVENT</div><h3>{selectedEvent.type.replace("_", " ")}</h3><div className="demo-detail-row"><span>TIME WINDOW</span><strong>{formatSeconds(selectedEvent.start)}–{formatSeconds(selectedEvent.end)} · {(selectedEvent.end - selectedEvent.start).toFixed(1)} sec</strong></div><div className="demo-detail-row"><span>SEVERITY</span><strong>{selectedEvent.severity}</strong></div><div className="demo-detail-row"><span>AFFECTED FRAMES</span><strong>{frameRange(selectedEvent)}</strong></div><div className="demo-detail-row"><span>RECOMMENDED ACTION</span><strong className={selectedEvent.action === "EXCLUDE" ? "demo-danger" : "demo-warn"}>{selectedEvent.action}</strong></div></div><div className="demo-stats"><div><span>GOOD FRAMES</span><strong>{(totalFrames - excludedFrames - degradedFrames).toLocaleString()}</strong></div><div><span>DEGRADED</span><strong className="demo-warn">{degradedFrames}</strong></div><div><span>EXCLUDED</span><strong className="demo-danger">{excludedFrames}</strong></div><div><span>USED FOR RECONSTRUCTION</span><strong>{(totalFrames - excludedFrames).toLocaleString()}</strong></div></div></div>
+    <div className="demo-disclaimer"><WifiOff size={14} /> DEMO ONLY — no video is uploaded, modified, or deleted. These mock frame decisions illustrate the planned DRIFT pipeline.</div>
+  </section>;
+}
 
 function MetricCard({ label, value, unit, hint, accent = "cyan", icon }: { label: string; value: string; unit?: string; hint: string; accent?: "cyan" | "amber" | "lime"; icon: React.ReactNode }) {
   return (
@@ -293,6 +314,7 @@ export default function Home() {
           <section className="panel session-card"><div className="panel-heading"><div><div className="eyebrow">FLIGHT SESSION</div><div className="panel-subtitle">{FLIGHT_ID}</div></div><Radio size={17} color="#60e5df" /></div><div className="session-list"><div><span>DEVICE ID</span><strong>{current.deviceId ?? DEVICE_ID}</strong></div><div><span>SESSION START</span><strong>SUPABASE <em>UTC</em></strong></div><div><span>LATEST READING</span><strong>{formatTime(lastSeen)} <em>LOCAL</em></strong></div><div><span>READINGS RECEIVED</span><strong>{(readingCount || readings.length).toLocaleString()}</strong></div></div><div className="threshold"><div className="threshold-head"><span><SlidersHorizontal size={13} /> PROTOTYPE THRESHOLD</span><strong>0.08 g RMS</strong></div><p>Calibration value for flight testing. Not a scientifically validated drone safety threshold.</p></div></section></div>
 
         <section className="panel events-panel"><div className="panel-heading"><div><div className="eyebrow">SENSOR EVENT HISTORY</div><div className="panel-subtitle">Latest readings from the selected time range</div></div><label className="table-filter"><Signal size={13} /><select value={selectedDevice} onChange={(event) => setSelectedDevice(event.target.value)}><option value="ALL">ALL DEVICES</option><option value="DRIFT-IMU-01">DRIFT-IMU-01</option><option value="DRIFT-IMU-02">DRIFT-IMU-02 · STANDBY</option></select></label></div><div className="table-scroll"><table><thead><tr><th>TIMESTAMP</th><th>DEVICE</th><th>RMS</th><th>VIBRATION</th><th>STATUS</th></tr></thead><tbody>{readings.slice(-6).reverse().map((reading, index) => <tr key={`${reading.time}-${index}`}><td>{reading.time}</td><td><span className="device-cell"><span className="tiny-dot" /> {reading.deviceId ?? DEVICE_ID}</span></td><td className="mono">{reading.rms.toFixed(3)} g</td><td className="mono">{reading.vibration.toFixed(3)} g</td><td><span className={`status-pill ${reading.status === "NORMAL" ? "good" : "warning"}`}>{reading.status.replace("_", " ")}</span></td></tr>)}</tbody></table></div></section>
+        <DemoVideoSync />
         <footer className="footer"><span><BatteryCharging size={14} /> ESP32 DEV MODULE · MPU6050 · 200 Hz SAMPLING</span><span>SUPABASE REALTIME <i className="footer-dot" /> ENVIRONMENT READY</span></footer>
         </div>
       </div>
