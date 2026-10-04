@@ -69,13 +69,14 @@ const seed: Reading[] = Array.from({ length: 34 }, (_, index) => {
 });
 
 const formatTime = (date = new Date()) => date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-const normalizeStatus = (status: unknown, rms: number, peakRms = rms, vibration = 0, impact = false): Reading["status"] => {
+const normalizeStatus = (status: unknown, rms: number, _peakRms = rms, vibration = 0, impact = false): Reading["status"] => {
   const normalized = String(status ?? "").trim().toUpperCase();
   if (impact || normalized === "IMPACT" || normalized === "SHOCK") return "IMPACT";
   if (normalized === "HIGH_VIBRATION" || normalized === "HIGH VIBRATION" || normalized === "HIGH-VIBRATION") return "HIGH_VIBRATION";
   if (normalized === "WARMING_UP") return "WARMING_UP";
-  // Some firmware writes status=NORMAL while peak_rms contains the actual threshold excursion.
-  if (peakRms >= 0.08 || rms >= 0.08 || vibration >= 0.08) return "HIGH_VIBRATION";
+  // peak_rms is a stored/rolling peak and may remain high after the vibration event ends.
+  // Current flight quality must use the newest row's current RMS/vibration values.
+  if (rms >= 0.08 || vibration >= 0.08) return "HIGH_VIBRATION";
   if (normalized === "NORMAL") return "NORMAL";
   return "NORMAL";
 };
