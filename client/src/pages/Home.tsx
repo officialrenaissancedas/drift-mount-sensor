@@ -69,13 +69,15 @@ const seed: Reading[] = Array.from({ length: 34 }, (_, index) => {
 });
 
 const formatTime = (date = new Date()) => date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-const normalizeStatus = (status: unknown, rms: number): Reading["status"] => {
+const normalizeStatus = (status: unknown, rms: number, peakRms = rms, vibration = 0, impact = false): Reading["status"] => {
   const normalized = String(status ?? "").trim().toUpperCase();
-  if (normalized === "NORMAL") return "NORMAL";
-  if (normalized === "HIGH_VIBRATION") return "HIGH_VIBRATION";
-  if (normalized === "IMPACT") return "IMPACT";
+  if (impact || normalized === "IMPACT" || normalized === "SHOCK") return "IMPACT";
+  if (normalized === "HIGH_VIBRATION" || normalized === "HIGH VIBRATION" || normalized === "HIGH-VIBRATION") return "HIGH_VIBRATION";
   if (normalized === "WARMING_UP") return "WARMING_UP";
-  return rms > 0.08 ? "HIGH_VIBRATION" : "NORMAL";
+  // Some firmware writes status=NORMAL while peak_rms contains the actual threshold excursion.
+  if (peakRms >= 0.08 || rms >= 0.08 || vibration >= 0.08) return "HIGH_VIBRATION";
+  if (normalized === "NORMAL") return "NORMAL";
+  return "NORMAL";
 };
 
 const DEVICE_ID = "DRIFT-IMU-01";
@@ -187,16 +189,21 @@ export default function Home() {
           return;
         }
         const recent = [...data].reverse().map((row) => {
-          const reading = row as Partial<Reading> & { created_at?: string; status?: string; device_id?: string; flight_id?: string; peak_rms?: number };
+          const reading = row as Partial<Reading> & { created_at?: string; status?: string; device_id?: string; flight_id?: string; peak_rms?: number; impact?: boolean; event_type?: string };
           const rms = Number(reading.rms ?? 0);
+          const peakRms = Number(reading.peak_rms ?? rms);
+          const vibration = Number(reading.vibration ?? 0);
           return {
             time: reading.created_at ? formatTime(new Date(reading.created_at)) : formatTime(),
             rms: Number(rms.toFixed(3)),
-            peakRms: Number(Number(reading.peak_rms ?? rms).toFixed(3)),
-            vibration: Number(Number(reading.vibration ?? 0).toFixed(3)),
+            peakRms: Number(peakRms.toFixed(3)),
+            vibration: Number(vibration.toFixed(3)),
             ax: Number(Number(reading.ax ?? 0).toFixed(3)), ay: Number(Number(reading.ay ?? 0).toFixed(3)), az: Number(Number(reading.az ?? 0).toFixed(3)),
             gx: Number(Number(reading.gx ?? 0).toFixed(1)), gy: Number(Number(reading.gy ?? 0).toFixed(1)), gz: Number(Number(reading.gz ?? 0).toFixed(1)),
-            status: normalizeStatus(reading.status, rms),
+            status: normalizeStatus(reading.status, rms, peakRms, vibration, Boolean(reading.impact) || ["IMPACT", "SHOCK"].includes(String(reading.event_type ?? "").toUpperCase())),
+            deviceId: reading.device_id,
+            flightId: reading.flight_id,
+            createdAt: reading.created_at,
           };
         });
         setReadings(recent);
@@ -209,17 +216,22 @@ export default function Home() {
       const channel = supabase
         .channel("sensor-readings-live")
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "sensor_readings", filter: `flight_id=eq.${FLIGHT_ID}` }, ({ new: row }) => {
-          const reading = row as Partial<Reading> & { created_at?: string; timestamp_ms?: number; status?: string; device_id?: string; flight_id?: string; peak_rms?: number };
+          const reading = row as Partial<Reading> & { created_at?: string; timestamp_ms?: number; status?: string; device_id?: string; flight_id?: string; peak_rms?: number; impact?: boolean; event_type?: string };
           if (selectedDevice !== "ALL" && reading.device_id !== selectedDevice) return;
           const rms = Number(reading.rms ?? 0);
+          const peakRms = Number(reading.peak_rms ?? rms);
+          const vibration = Number(reading.vibration ?? 0);
           const realtimeReading: Reading = {
             time: reading.created_at ? formatTime(new Date(reading.created_at)) : formatTime(),
             rms: Number(rms.toFixed(3)),
-            peakRms: Number(Number(reading.peak_rms ?? rms).toFixed(3)),
-            vibration: Number(Number(reading.vibration ?? 0).toFixed(3)),
+            peakRms: Number(peakRms.toFixed(3)),
+            vibration: Number(vibration.toFixed(3)),
             ax: Number(Number(reading.ax ?? 0).toFixed(3)), ay: Number(Number(reading.ay ?? 0).toFixed(3)), az: Number(Number(reading.az ?? 0).toFixed(3)),
             gx: Number(Number(reading.gx ?? 0).toFixed(1)), gy: Number(Number(reading.gy ?? 0).toFixed(1)), gz: Number(Number(reading.gz ?? 0).toFixed(1)),
-            status: normalizeStatus(reading.status, rms),
+            status: normalizeStatus(reading.status, rms, peakRms, vibration, Boolean(reading.impact) || ["IMPACT", "SHOCK"].includes(String(reading.event_type ?? "").toUpperCase())),
+            deviceId: reading.device_id,
+            flightId: reading.flight_id,
+            createdAt: reading.created_at,
           };
           setReadings((previous) => [...previous.slice(-39), realtimeReading]);
           setReadingCount((count) => count + 1);
@@ -231,28 +243,8 @@ export default function Home() {
         });
       return () => { cancelled = true; void supabase.removeChannel(channel); };
     }
-    const timer = window.setInterval(() => {
-      setReadings((previous) => {
-        const last = previous[previous.length - 1];
-        const index = previous.length;
-        const nextRms = Math.max(0.01, Math.min(0.11, last.rms + (Math.sin(index * 1.7) * 0.004) + (Math.random() - 0.48) * 0.003));
-        const next: Reading = {
-          ...last,
-          time: formatTime(),
-          rms: Number(nextRms.toFixed(3)),
-          vibration: Number((nextRms * 0.74 + (Math.random() - 0.5) * 0.004).toFixed(3)),
-          ax: Number((Math.sin(index / 3) * 0.08 + (Math.random() - 0.5) * 0.01).toFixed(3)),
-          ay: Number((Math.cos(index / 3.8) * 0.06 + (Math.random() - 0.5) * 0.01).toFixed(3)),
-          gx: Number((Math.sin(index / 2) * 12 + (Math.random() - 0.5) * 2).toFixed(1)),
-          gy: Number((Math.cos(index / 2.7) * 8 + (Math.random() - 0.5) * 1.5).toFixed(1)),
-          gz: Number((Math.sin(index / 4) * 6 + (Math.random() - 0.5)).toFixed(1)),
-          status: nextRms > 0.08 ? "HIGH_VIBRATION" : "NORMAL",
-        };
-        return [...previous.slice(-39), next];
-      });
-      setLastSeen(new Date());
-    }, 2600);
-    return () => window.clearInterval(timer);
+    setDataWarning("Supabase variables are missing. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel to enable live telemetry.");
+    return;
   }, [isLive, range, selectedDevice]);
 
   const exportCsv = () => {
